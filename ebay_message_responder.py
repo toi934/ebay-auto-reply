@@ -162,7 +162,7 @@ def get_unanswered_messages(account_name, days=1):
         '    <eBayAuthToken>' + acc["TOKEN"] + '</eBayAuthToken>\n'
         '  </RequesterCredentials>\n'
         '  <MailMessageType>All</MailMessageType>\n'
-        '  <MessageStatus>Unanswered</MessageStatus>\n'
+        '  <MessageStatus>All</MessageStatus>\n'
         '  <StartCreationTime>' + start_time + '</StartCreationTime>\n'
         '  <EndCreationTime>' + end_time + '</EndCreationTime>\n'
         '</GetMemberMessagesRequest>\n'
@@ -200,6 +200,11 @@ def get_unanswered_messages(account_name, days=1):
     for exchange in exchanges:
         question = exchange.find(CURN + "Question")
         if question is None:
+            continue
+
+        # すでに seller が返信済みのスレッドはスキップ
+        # （MessageStatus=All で全件取得するため、返信済みを除外する必要がある）
+        if exchange.find(CURN + "Response") is not None:
             continue
 
         msg_type = _text(question, "MessageType")
@@ -430,7 +435,7 @@ def main():
          " スキップ=" + str(total["skipped"]))
     _log("=" * 60)
 
-    # ﾀｽｸ5結果.txt に先頭追記（最新が上）
+    # ｀｀｀タスク5結果.txt に先頭追記（最新が上）
     _write_result(per_account_stats, total, dry_run)
 
 
