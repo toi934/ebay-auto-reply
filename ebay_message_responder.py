@@ -49,6 +49,8 @@ NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
 
 # ログファイルパス
 LOG_PATH = os.path.join(_THIS_DIR, "responder_log.txt")
+# 結果ファイルパス（最新が上）
+RESULT_PATH = os.path.join(_THIS_DIR, "ﾀｽｸ5結果.txt")
 
 # =========================================================
 # 返信テンプレート
@@ -148,17 +150,6 @@ def _call_trading_api(account_name, call_name, xml_body):
 # =========================================================
 
 def get_unanswered_messages(account_name, days=1):
-    """未回答メッセージを取得する
-
-    Args:
-        account_name: "tsujou" or "senmon"
-        days: 過去何日分を取得するか（デフォルト1日）
-
-    Returns:
-        list of dict:
-            message_id, parent_message_id, sender_id,
-            item_id, subject, body, creation_date
-    """
     acc = ebay_config.get_account(account_name)
     now_utc = datetime.now(timezone.utc)
     start_time = (now_utc - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -183,7 +174,6 @@ def get_unanswered_messages(account_name, days=1):
         print("  [ERROR] GetMemberMessages 失敗: " + str(e)[:120])
         return []
 
-    # エラーチェック
     ack = root.findtext("e:Ack", namespaces=NS) or root.findtext("Ack", "")
     if ack not in ("Success", "Warning"):
         errors = root.findall(".//e:ShortMessage", NS) or root.findall(".//ShortMessage")
@@ -191,7 +181,6 @@ def get_unanswered_messages(account_name, days=1):
         print("  [ERROR] API応答: " + ack + " / " + err_msg)
         return []
 
-    # デバッグ: 生XMLを保存（解析に問題があるとき確認用）
     debug_xml_path = os.path.join(_THIS_DIR, "last_api_response_" + account_name + ".xml")
     try:
         with open(debug_xml_path, "wb") as f:
@@ -200,24 +189,9 @@ def get_unanswered_messages(account_name, days=1):
         pass
 
     messages = []
-
-    # eBay GetMemberMessages のレスポンス構造:
-    # GetMemberMessagesResponse
-    #   └ MemberMessage
-    #       └ MemberMessageExchange (1件ごと)
-    #           └ Question         ← 買い手からのメッセージ本体
-    #               ├ MessageID
-    #               ├ SenderID
-    #               ├ Subject
-    #               ├ Body
-    #               └ ItemID
-    #           └ Response         ← 既回答があれば存在
-
-    # Clark記法で直接検索（ElementTreeのorバグ回避: テキストノードはfalsyになる）
     CURN = "{urn:ebay:apis:eBLBaseComponents}"
 
     def _text(node, tag):
-        """Clark記法でテキスト取得（None安全）"""
         el = node.find(CURN + tag)
         return el.text if el is not None and el.text else ""
 
@@ -228,12 +202,7 @@ def get_unanswered_messages(account_name, days=1):
         if question is None:
             continue
 
-        # MessageType チェック:
-        #   AskSellerQuestion       → 買い手からの新規質問  ← 対象
-        #   ResponseToASQQuestion   → 既存スレッドへの買い手返信 ← キーワードあれば返信
         msg_type = _text(question, "MessageType")
-
-        # ItemID は Question 内ではなく exchange/Item/ItemID にある
         item_el = exchange.find(CURN + "Item")
         item_id = _text(item_el, "ItemID") if item_el is not None else ""
 
@@ -256,19 +225,6 @@ def get_unanswered_messages(account_name, days=1):
 # =========================================================
 
 def send_reply(account_name, item_id, parent_message_id, recipient_id, reply_body, dry_run=False):
-    """買い手メッセージに返信する
-
-    Args:
-        account_name: "tsujou" or "senmon"
-        item_id: eBay ItemID
-        parent_message_id: 返信先の MessageID
-        recipient_id: 送信先 (= 買い手の SenderID)
-        reply_body: 返信本文
-        dry_run: True なら送信せず内容を表示するだけ
-
-    Returns:
-        bool: 成功したか
-    """
     if dry_run:
         print("    [DRY-RUN] 送信しない。返信内容:")
         for line in reply_body.splitlines():
@@ -322,15 +278,50 @@ def _log(msg):
 
 
 # =========================================================
+# 結果ファイル書き込み（先頭追記・最新が上）
+# =========================================================
+
+def _write_result(per_account_stats, total, dry_run):
+    """実行結果を ﾀｽｸ5結果.txt の先頭に追記する（最新が上）"""
+    now = datetime.now().strftime("%Y/%m/%d %H:%M")
+    mode = "DRY-RUN" if dry_run else "本番"
+
+    acc_labels = {
+        "tsujou": "通常(japanesehappinessshop)",
+        "senmon": "専門(japanese_selectshop)",
+    }
+
+    lines = []
+    lines.append("=" * 52)
+    lines.append(now + "  【" + mode + "】")
+    for acc, stats in per_account_stats.items():
+        label = acc_labels.get(acc, acc)
+        lines.append("  " + label + ":"
+                     " チェック=" + str(stats.get("checked", 0)) +
+                     " 返信=" + str(stats.get("replied", 0)) +
+                     " スキップ=" + str(stats.get("skipped", 0)))
+    lines.append("  合計: チェック=" + str(total["checked"]) +
+                 " 返信=" + str(total["replied"]) +
+                 " スキップ=" + str(total["skipped"]))
+
+    new_block = "\n".join(lines) + "\n"
+
+    try:
+        existing = ""
+        if os.path.exists(RESULT_PATH):
+            with open(RESULT_PATH, "r", encoding="utf-8") as f:
+                existing = f.read()
+        with open(RESULT_PATH, "w", encoding="utf-8") as f:
+            f.write(new_block + existing)
+    except Exception as e:
+        _log("[WARN] 結果ファイル書き込み失敗: " + str(e)[:80])
+
+
+# =========================================================
 # メインロジック
 # =========================================================
 
 def process_account(account_name, days=1, dry_run=False):
-    """1アカウント分のメッセージを処理する
-
-    Returns:
-        dict: {"checked": N, "replied": N, "skipped": N}
-    """
     acc = ebay_config.get_account(account_name)
     _log("=" * 60)
     _log("アカウント: " + acc["name"] + " (" + acc["seller"] + ")")
@@ -385,13 +376,12 @@ def process_account(account_name, days=1, dry_run=False):
             _log("  [FAIL] 返信失敗 → 手動確認が必要")
             stats["skipped"] += 1
 
-        time.sleep(1)  # API呼び出し間隔
+        time.sleep(1)
 
     return stats
 
 
 def main():
-    # 引数パース
     dry_run = "--dry-run" in sys.argv
     days = 1
     target_accounts = ["tsujou", "senmon"]
@@ -422,10 +412,12 @@ def main():
     _log("=" * 60)
 
     total = {"checked": 0, "replied": 0, "skipped": 0}
+    per_account_stats = {}
 
     for account_name in target_accounts:
         try:
             stats = process_account(account_name, days=days, dry_run=dry_run)
+            per_account_stats[account_name] = stats
             for k in total:
                 total[k] += stats.get(k, 0)
         except Exception as e:
@@ -437,6 +429,9 @@ def main():
          " 返信=" + str(total["replied"]) +
          " スキップ=" + str(total["skipped"]))
     _log("=" * 60)
+
+    # ﾀｽｸ5結果.txt に先頭追記（最新が上）
+    _write_result(per_account_stats, total, dry_run)
 
 
 if __name__ == "__main__":
