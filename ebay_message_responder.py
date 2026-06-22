@@ -427,4 +427,17 @@ def main():
         try:
             stats = process_account(account_name, days=days, dry_run=dry_run)
             for k in total:
-                total[k] += stat
+                total[k] += stats.get(k, 0)
+        except Exception as e:
+            _log("[ERROR] アカウント処理失敗 (" + account_name + "): " + str(e)[:120])
+
+    _log("")
+    _log("=" * 60)
+    _log("完了: チェック=" + str(total["checked"]) +
+         " 返信=" + str(total["replied"]) +
+         " スキップ=" + str(total["skipped"]))
+    _log("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
