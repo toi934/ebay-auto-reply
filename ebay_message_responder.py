@@ -162,7 +162,7 @@ def get_unanswered_messages(account_name, days=1):
         '    <eBayAuthToken>' + acc["TOKEN"] + '</eBayAuthToken>\n'
         '  </RequesterCredentials>\n'
         '  <MailMessageType>All</MailMessageType>\n'
-        '  <MessageStatus>All</MessageStatus>\n'
+        '  <MessageStatus>Unanswered</MessageStatus>\n'
         '  <StartCreationTime>' + start_time + '</StartCreationTime>\n'
         '  <EndCreationTime>' + end_time + '</EndCreationTime>\n'
         '</GetMemberMessagesRequest>\n'
@@ -203,7 +203,7 @@ def get_unanswered_messages(account_name, days=1):
             continue
 
         # すでに seller が返信済みのスレッドはスキップ
-        # （MessageStatus=All で全件取得するため、返信済みを除外する必要がある）
+        # （MessageStatus=Unanswered でもResponseToASQQuestionは取得されるため確認が必要）
         if exchange.find(CURN + "Response") is not None:
             continue
 
