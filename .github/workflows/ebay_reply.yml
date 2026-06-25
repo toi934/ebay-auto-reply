@@ -10,15 +10,19 @@ on:
 jobs:
   reply:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Create ebay_config.py from secrets
         run: python create_config.py
         env:
@@ -27,11 +31,26 @@ jobs:
           APP_ID: ${{ secrets.APP_ID }}
           DEV_ID: ${{ secrets.DEV_ID }}
           CERT_ID: ${{ secrets.CERT_ID }}
+
       - name: Run auto-reply (both accounts)
-        run: python ebay_message_responder.py
+        run: python ebay_message_responder.py 2>&1 | tee /tmp/task5_output.txt; exit ${PIPESTATUS[0]}
         env:
           TSUJOU_TOKEN: ${{ secrets.TSUJOU_TOKEN }}
           SENMON_TOKEN: ${{ secrets.SENMON_TOKEN }}
           APP_ID: ${{ secrets.APP_ID }}
           DEV_ID: ${{ secrets.DEV_ID }}
           CERT_ID: ${{ secrets.CERT_ID }}
+
+      - name: Send result email
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: gen7m9@gmail.com
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "タスク5実行結果 (${{ github.run_number }}回目)"
+          body: file:///tmp/task5_output.txt
+          to: gen7m9@gmail.com
+          from: gen7m9@gmail.com
